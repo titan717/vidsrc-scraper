@@ -101,13 +101,42 @@ async function scrapeProvider(domain, url) {
       }
     });
 
-    // Optional: log when iframe is attached
     page.on("frameattached", (frame) => {
-      console.log(`[${domain}] Frame attached: ${frame.url()}`);
+      const frameUrl = frame.url();
+      frameUrls.push(frameUrl);
+      console.log(`[${domain}] Frame attached: ${frameUrl}`);
+    });
+
+    page.on("request", (request) => {
+      const reqUrl = request.url();
+      if (/\.(m3u8|mp4|m4s|ts)(\?|$)/i.test(reqUrl) || /\/playlist|\/stream|\/manifest/i.test(reqUrl)) {
+        if (!mediaRequests.includes(reqUrl)) mediaRequests.push(reqUrl);
+        console.log(`[${domain}] Media request: ${reqUrl}`);
+      }
+    });
+
+    page.on("response", (response) => {
+      const responseUrl = response.url();
+      if (/\.(m3u8|mp4|m4s|ts)(\?|$)/i.test(responseUrl) || /\/playlist|\/stream|\/manifest/i.test(responseUrl)) {
+        responseDiagnostics.push({
+          url: responseUrl,
+          status: response.status(),
+          contentType: response.headers()["content-type"] || null,
+        });
+        console.log(`[${domain}] Media response ${response.status()}: ${responseUrl}`);
+      }
     });
 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-    console.log(`[${domain}] Page loaded`);
+    console.log(`[${domain}] Page loaded: ${page.url()}`);
+
+    const iframeUrls = await page.locator("iframe").evaluateAll((iframes) =>
+      iframes.map((iframe) => ({
+        src: iframe.getAttribute("src") || "",
+        title: iframe.getAttribute("title") || "",
+      }))
+    );
+    console.log(`[${domain}] Iframes: ${JSON.stringify(iframeUrls)}`);
 
     // VidSrc page structure changes frequently. Do not depend on the legacy
     // #the_frame selector. Look for a playable iframe/frame or a visible
@@ -160,7 +189,7 @@ async function scrapeProvider(domain, url) {
     if (!hlsUrl) {
       const diagnostics = {
         final_url: page.url(),
-        iframe_urls,
+        iframe_urls: typeof iframeUrls !== "undefined" ? iframeUrls : [],
         frame_urls: frameUrls,
         media_requests: mediaRequests,
         media_responses: responseDiagnostics,
@@ -178,7 +207,7 @@ async function scrapeProvider(domain, url) {
       error: null,
       diagnostics: {
         final_url: page.url(),
-        iframe_urls,
+        iframe_urls: typeof iframeUrls !== "undefined" ? iframeUrls : [],
         frame_urls: frameUrls,
         media_requests: mediaRequests,
         media_responses: responseDiagnostics,
