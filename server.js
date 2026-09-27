@@ -62,6 +62,9 @@ async function scrapeProvider(domain, url) {
 
   let hlsUrl = null;
   const subtitles = [];
+  const mediaRequests = [];
+  const frameUrls = [];
+  const responseDiagnostics = [];
 
   const isSubtitle = (url) => {
     return (
@@ -154,9 +157,33 @@ async function scrapeProvider(domain, url) {
     await page.close();
     await context.close();
 
-    if (!hlsUrl) throw new Error("HLS URL not found");
+    if (!hlsUrl) {
+      const diagnostics = {
+        final_url: page.url(),
+        iframe_urls,
+        frame_urls: frameUrls,
+        media_requests: mediaRequests,
+        media_responses: responseDiagnostics,
+        title: await page.title().catch(() => ""),
+      };
+      console.warn(
+        `[${domain}] HLS not found diagnostics: ${JSON.stringify(diagnostics)}`
+      );
+      throw new Error("HLS URL not found");
+    }
 
-    return { hls_url: hlsUrl, subtitles, error: null };
+    return {
+      hls_url: hlsUrl,
+      subtitles,
+      error: null,
+      diagnostics: {
+        final_url: page.url(),
+        iframe_urls,
+        frame_urls: frameUrls,
+        media_requests: mediaRequests,
+        media_responses: responseDiagnostics,
+      },
+    };
   } catch (error) {
     await page.close().catch(() => {});
     await context.close().catch(() => {});
