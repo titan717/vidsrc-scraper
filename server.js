@@ -79,7 +79,7 @@ async function scrapeProvider(domain, url) {
     // Observe requests at the browser-context level so media traffic from nested iframes is captured too.
     context.on("request", (request) => {
       const reqUrl = request.url();
-      if (/\\.(m3u8|mp4|m4s|ts)(\\?|$)/i.test(reqUrl) || /\\/playlist|\\/stream|\\/manifest/i.test(reqUrl)) {
+      if (/\.(m3u8|mp4|m4s|ts)(\?|$)/i.test(reqUrl) || /\/playlist|\/stream|\/manifest/i.test(reqUrl)) {
         if (!mediaRequests.includes(reqUrl)) mediaRequests.push(reqUrl);
         console.log(`[${domain}] Context media request: ${reqUrl}`);
       }
@@ -91,7 +91,7 @@ async function scrapeProvider(domain, url) {
 
     context.on("response", (response) => {
       const responseUrl = response.url();
-      if (/\\.(m3u8|mp4|m4s|ts)(\\?|$)/i.test(responseUrl) || /\\/playlist|\\/stream|\\/manifest/i.test(responseUrl)) {
+      if (/\.(m3u8|mp4|m4s|ts)(\?|$)/i.test(responseUrl) || /\/playlist|\/stream|\/manifest/i.test(responseUrl)) {
         responseDiagnostics.push({ url: responseUrl, status: response.status(), contentType: response.headers()["content-type"] || null });
         console.log(`[${domain}] Context media response ${response.status()}: ${responseUrl}`);
       }
@@ -165,7 +165,6 @@ async function scrapeProvider(domain, url) {
     // Some providers populate the iframe src asynchronously. Give it a short
     // window to settle before attempting playback.
     if (iframeUrls.some((iframe) => iframe.src)) {
-      const iframeWithSrc = page.locator("iframe").filter({ has: undefined }).first();
       await page.waitForTimeout(500);
       iframeUrls = await page.locator("iframe").evaluateAll((iframes) =>
         iframes.map((iframe) => ({ src: iframe.getAttribute("src") || "", title: iframe.getAttribute("title") || "" }))
@@ -226,12 +225,7 @@ async function scrapeProvider(domain, url) {
     };
 
     if (!hlsUrl) {
-      console.warn(
-        `[${domain}] HLS not found diagnostics: ${JSON.stringify(diagnostics)}`
-      );
-      console.warn(
-        `[${domain}] HLS not found diagnostics: ${JSON.stringify(diagnostics)}`
-      );
+      console.warn(`[${domain}] HLS not found diagnostics: ${JSON.stringify(diagnostics)}`);
       return { hls_url: null, subtitles, error: "HLS URL not found", diagnostics };
     }
 
