@@ -149,7 +149,7 @@ async function scrapeProvider(domain, url) {
       .catch(() => null);
 
     if (playbackFrame) {
-      console.log("[${domain}] Found iframe");
+      console.log(`[${domain}] Found iframe`);
       const box = await playbackFrame.boundingBox();
       if (box) {
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -159,10 +159,10 @@ async function scrapeProvider(domain, url) {
         .locator("video, [class*='play'], [id*='play'], [class*='player'], [id*='player']")
         .first();
       if (await playbackSurface.count()) {
-        console.log("[${domain}] Found playback surface");
+        console.log(`[${domain}] Found playback surface`);
         await playbackSurface.click({ force: true }).catch(() => {});
       } else {
-        console.warn("[${domain}] No explicit playback surface found; monitoring network requests");
+        console.warn(`[${domain}] No explicit playback surface found; monitoring network requests`);
       }
     }
 
@@ -183,41 +183,48 @@ async function scrapeProvider(domain, url) {
       await page.waitForTimeout(5000);
     }
 
-    await page.close();
-    await context.close();
+    const diagnostics = {
+      final_url: page.url(),
+      iframe_urls: iframeUrls,
+      frame_urls: frameUrls,
+      media_requests: mediaRequests,
+      media_responses: responseDiagnostics,
+      title: await page.title().catch(() => ""),
+    };
 
     if (!hlsUrl) {
-      const diagnostics = {
-        final_url: page.url(),
-        iframe_urls: typeof iframeUrls !== "undefined" ? iframeUrls : [],
-        frame_urls: frameUrls,
-        media_requests: mediaRequests,
-        media_responses: responseDiagnostics,
-        title: await page.title().catch(() => ""),
-      };
       console.warn(
         `[${domain}] HLS not found diagnostics: ${JSON.stringify(diagnostics)}`
       );
-      throw new Error("HLS URL not found");
+      console.warn(
+        `[${domain}] HLS not found diagnostics: ${JSON.stringify(diagnostics)}`
+      );
+      return { hls_url: null, subtitles, error: "HLS URL not found", diagnostics };
     }
+
+    await page.close();
+    await context.close();
 
     return {
       hls_url: hlsUrl,
       subtitles,
       error: null,
-      diagnostics: {
-        final_url: page.url(),
-        iframe_urls: typeof iframeUrls !== "undefined" ? iframeUrls : [],
-        frame_urls: frameUrls,
-        media_requests: mediaRequests,
-        media_responses: responseDiagnostics,
-      },
+      diagnostics,
     };
   } catch (error) {
     await page.close().catch(() => {});
     await context.close().catch(() => {});
     console.error(`[${domain}] Error: ${error.message}`);
-    return { hls_url: null, subtitles: [], error: error.message };
+    return {
+      hls_url: null,
+      subtitles: [],
+      error: error.message,
+      diagnostics: {
+        frame_urls: frameUrls,
+        media_requests: mediaRequests,
+        media_responses: responseDiagnostics,
+      },
+    };
   }
 }
 
