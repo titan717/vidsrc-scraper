@@ -65,6 +65,7 @@ async function scrapeProvider(domain, url) {
   const mediaRequests = [];
   const frameUrls = [];
   const responseDiagnostics = [];
+  const frameNavigations = [];
 
   const isSubtitle = (url) => {
     return (
@@ -75,6 +76,33 @@ async function scrapeProvider(domain, url) {
   };
 
   try {
+    // Observe requests at the browser-context level so media traffic from nested iframes is captured too.
+    context.on("request", (request) => {
+      const reqUrl = request.url();
+      if (/\\.(m3u8|mp4|m4s|ts)(\\?|$)/i.test(reqUrl) || /\\/playlist|\\/stream|\\/manifest/i.test(reqUrl)) {
+        if (!mediaRequests.includes(reqUrl)) mediaRequests.push(reqUrl);
+        console.log(`[${domain}] Context media request: ${reqUrl}`);
+      }
+      if (!hlsUrl && /\\.m3u8(\\?|$)/i.test(reqUrl)) {
+        hlsUrl = reqUrl;
+        console.log(`[${domain}] Found HLS URL: ${hlsUrl}`);
+      }
+    });
+
+    context.on("response", (response) => {
+      const responseUrl = response.url();
+      if (/\\.(m3u8|mp4|m4s|ts)(\\?|$)/i.test(responseUrl) || /\\/playlist|\\/stream|\\/manifest/i.test(responseUrl)) {
+        responseDiagnostics.push({ url: responseUrl, status: response.status(), contentType: response.headers()["content-type"] || null });
+        console.log(`[${domain}] Context media response ${response.status()}: ${responseUrl}`);
+      }
+    });
+
+    page.on("framenavigated", (frame) => {
+      const frameUrl = frame.url();
+      frameNavigations.push(frameUrl);
+      console.log(`[${domain}] Frame navigated: ${frameUrl}`);
+    });
+
     // Intercept requests
     await page.route("**/*", (route) => {
       const reqUrl = route.request().url();
@@ -130,23 +158,26 @@ async function scrapeProvider(domain, url) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
     console.log(`[${domain}] Page loaded: ${page.url()}`);
 
-    const iframeUrls = await page.locator("iframe").evaluateAll((iframes) =>
-      iframes.map((iframe) => ({
-        src: iframe.getAttribute("src") || "",
-        title: iframe.getAttribute("title") || "",
-      }))
+    let iframeUrls = await page.locator("iframe").evaluateAll((iframes) =>
+      iframes.map((iframe) => ({ src: iframe.getAttribute("src") || "", title: iframe.getAttribute("title") || "" }))
     );
+
+    // Some providers populate the iframe src asynchronously. Give it a short
+    // window to settle before attempting playback.
+    if (iframeUrls.some((iframe) => iframe.src)) {
+      const iframeWithSrc = page.locator("iframe").filter({ has: undefined }).first();
+      await page.waitForTimeout(500);
+      iframeUrls = await page.locator("iframe").evaluateAll((iframes) =>
+        iframes.map((iframe) => ({ src: iframe.getAttribute("src") || "", title: iframe.getAttribute("title") || "" }))
+      );
+    }
     console.log(`[${domain}] Iframes: ${JSON.stringify(iframeUrls)}`);
 
     // VidSrc page structure changes frequently. Do not depend on the legacy
     // #the_frame selector. Look for a playable iframe/frame or a visible
     // playback surface, then click it when possible. Network interception
     // remains the source of truth for HLS URLs.
-    const playbackFrame = await page
-      .locator("iframe")
-      .first()
-      .elementHandle()
-      .catch(() => null);
+    const playbackFrame = await page.locator("iframe").first().elementHandle().catch(() => null);
 
     if (playbackFrame) {
       console.log(`[${domain}] Found iframe`);
@@ -166,7 +197,8 @@ async function scrapeProvider(domain, url) {
       }
     }
 
-    await page.waitForTimeout(7000);
+    // Allow the embedded player to navigate and initialize after the click.
+    await page.waitForTimeout(10000);
 
     if (!hlsUrl) {
       await page
@@ -187,6 +219,7 @@ async function scrapeProvider(domain, url) {
       final_url: page.url(),
       iframe_urls: iframeUrls,
       frame_urls: frameUrls,
+      frame_navigations: frameNavigations,
       media_requests: mediaRequests,
       media_responses: responseDiagnostics,
       title: await page.title().catch(() => ""),
@@ -221,6 +254,7 @@ async function scrapeProvider(domain, url) {
       error: error.message,
       diagnostics: {
         frame_urls: frameUrls,
+        frame_navigations: frameNavigations,
         media_requests: mediaRequests,
         media_responses: responseDiagnostics,
       },
