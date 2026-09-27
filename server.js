@@ -106,50 +106,49 @@ async function scrapeProvider(domain, url) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
     console.log(`[${domain}] Page loaded`);
 
-    const frameDiv = await page.waitForSelector("#the_frame", {
-      timeout: 10000,
-    });
+    // VidSrc page structure changes frequently. Do not depend on the legacy
+    // #the_frame selector. Look for a playable iframe/frame or a visible
+    // playback surface, then click it when possible. Network interception
+    // remains the source of truth for HLS URLs.
+    const playbackFrame = await page
+      .locator("iframe")
+      .first()
+      .elementHandle()
+      .catch(() => null);
 
-    if (frameDiv) {
-      const box = await frameDiv.boundingBox();
-
+    if (playbackFrame) {
+      console.log("[${domain}] Found iframe");
+      const box = await playbackFrame.boundingBox();
       if (box) {
-        const clickX = box.x + box.width / 2;
-        const clickY = box.y + box.height / 2;
-        console.log(
-          `[${domain}] Clicking at (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`
-        );
-
-        await page.mouse.move(clickX, clickY);
-        await page.mouse.click(clickX, clickY);
-      } else {
-        console.warn(`[${domain}] Fallback: clicking via JS`);
-        await page.evaluate(() => {
-          document.querySelector("#the_frame")?.click();
-        });
-      }
-
-      // Give time for network requests (especially subtitle .vtt)
-      await page.waitForTimeout(7000);
-
-      // Try waiting for the HLS URL (if not already found)
-      if (!hlsUrl) {
-        await page
-          .waitForResponse((resp) => resp.url().includes(".m3u8"), {
-            timeout: 5000,
-          })
-          .catch(() => {
-            console.warn(`[${domain}] .m3u8 request not detected within 5s`);
-          });
-      }
-
-      // Extra wait if subtitles not found yet
-      if (subtitles.length === 0) {
-        console.warn(`[${domain}] No subtitles yet, waiting extra 5s...`);
-        await page.waitForTimeout(5000);
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       }
     } else {
-      throw new Error(`#the_frame div not found`);
+      const playbackSurface = page
+        .locator("video, [class*='play'], [id*='play'], [class*='player'], [id*='player']")
+        .first();
+      if (await playbackSurface.count()) {
+        console.log("[${domain}] Found playback surface");
+        await playbackSurface.click({ force: true }).catch(() => {});
+      } else {
+        console.warn("[${domain}] No explicit playback surface found; monitoring network requests");
+      }
+    }
+
+    await page.waitForTimeout(7000);
+
+    if (!hlsUrl) {
+      await page
+        .waitForResponse((resp) => resp.url().includes(".m3u8"), {
+          timeout: 5000,
+        })
+        .catch(() => {
+          console.warn("[${domain}] .m3u8 request not detected within 5s");
+        });
+    }
+
+    if (subtitles.length === 0) {
+      console.warn("[${domain}] No subtitles yet, waiting extra 5s...");
+      await page.waitForTimeout(5000);
     }
 
     await page.close();
